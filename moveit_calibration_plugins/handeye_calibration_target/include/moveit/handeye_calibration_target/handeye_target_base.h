@@ -126,7 +126,6 @@ public:
   const std::size_t CAMERA_MATRIX_VECTOR_DIMENSION = 9;  // 3x3 camera intrinsic matrix
   const std::size_t CAMERA_MATRIX_WIDTH = 3;
   const std::size_t CAMERA_MATRIX_HEIGHT = 3;
-  const std::size_t CAMERA_DISTORTION_VECTOR_DIMENSION = 5;  // distortion parameters (k1, k2, t1, t2, k3)
 
   virtual ~HandEyeTargetBase() = default;
   HandEyeTargetBase()
@@ -238,11 +237,17 @@ public:
       return false;
     }
 
-    if (msg->d.size() != CAMERA_DISTORTION_VECTOR_DIMENSION)
+    // OpenCV accepts the standard distortion-vector lengths used by the
+    // plumb-bob, rational-polynomial, thin-prism and tilted-sensor models.
+    // In particular, DepthAI publishes 8 coefficients for
+    // rational_polynomial camera calibration.
+    const std::size_t distortion_size = msg->d.size();
+    if (distortion_size != 4 && distortion_size != 5 && distortion_size != 8 && distortion_size != 12 &&
+        distortion_size != 14)
     {
       RCLCPP_ERROR(LOGGER_CALIBRATION_TARGET,
-                   "Invalid distortion parameters dimension, current is %ld, required is %zu.", msg->d.size(),
-                   CAMERA_DISTORTION_VECTOR_DIMENSION);
+                   "Invalid distortion parameters dimension: %zu. OpenCV accepts 4, 5, 8, 12 or 14 coefficients.",
+                   distortion_size);
       return false;
     }
 
@@ -257,10 +262,11 @@ public:
       }
     }
 
-    // Store camera distortion info
-    for (size_t i = 0; i < CAMERA_DISTORTION_VECTOR_DIMENSION; i++)
+    // Store camera distortion info, preserving the model received in CameraInfo.
+    distortion_coeffs_ = cv::Mat::zeros(static_cast<int>(distortion_size), 1, CV_64F);
+    for (size_t i = 0; i < distortion_size; i++)
     {
-      distortion_coeffs_.at<double>(i, 0) = msg->d[i];
+      distortion_coeffs_.at<double>(static_cast<int>(i), 0) = msg->d[i];
     }
 
     RCLCPP_DEBUG_STREAM(LOGGER_CALIBRATION_TARGET, "Set camera intrinsic parameter to: " << msg);

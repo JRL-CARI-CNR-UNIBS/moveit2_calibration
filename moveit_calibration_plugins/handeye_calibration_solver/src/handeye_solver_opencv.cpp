@@ -76,7 +76,10 @@ Eigen::Isometry3d convertToIsometry(const cv::Mat& rotationMatrix, const cv::Mat
   cv::Rect rotationRect(0, 0, 3, 3);
   cv::Rect translationRect(3, 0, 1, 3);
 
-  cv::Mat T_cam2gripper = cv::Mat::zeros(4, 4, CV_64F);
+  // Build a valid homogeneous transform. Starting from zeros left the
+  // bottom-right element equal to 0, producing an invalid Eigen::Isometry3d
+  // whose last row was [0 0 0 0].
+  cv::Mat T_cam2gripper = cv::Mat::eye(4, 4, CV_64F);
   rotationMatrix.copyTo(T_cam2gripper(rotationRect));
   translationVector.copyTo(T_cam2gripper(translationRect));
 
