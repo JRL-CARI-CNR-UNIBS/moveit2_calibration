@@ -54,6 +54,7 @@ HandEyeCharucoTarget::HandEyeCharucoTarget()
   parameters_.push_back(Parameter("ArUco dictionary", Parameter::ParameterType::Enum, dictionaries, 1));
   parameters_.push_back(Parameter("longest board side (m)", Parameter::ParameterType::Float, 0.56));
   parameters_.push_back(Parameter("measured marker size (m)", Parameter::ParameterType::Float, 0.06));
+  parameters_.push_back(Parameter("invert colors", Parameter::ParameterType::Bool, false));
 }
 
 bool HandEyeCharucoTarget::initialize()
@@ -74,6 +75,7 @@ bool HandEyeCharucoTarget::initialize()
       getParameter("marker border (bits)", border_size_bits) && getParameter("margin size (px)", margin_size_pixels) &&
       getParameter("ArUco dictionary", dictionary_id) && getParameter("longest board side (m)", board_size_meters) &&
       getParameter("measured marker size (m)", marker_size_meters) &&
+      getParameter("invert colors", invert_colors_) &&
       setTargetIntrinsicParams(squares_x, squares_y, marker_size_pixels, square_size_pixels, border_size_bits,
                                margin_size_pixels, dictionary_id) &&
       setTargetDimension(board_size_meters, marker_size_meters);
@@ -155,6 +157,8 @@ bool HandEyeCharucoTarget::createTargetImage(cv::Mat& image) const
 
     // Create target image
     board->draw(image_size, image, margin_size_pixels_, border_size_bits_);
+    if (invert_colors_)
+      cv::bitwise_not(image, image);
   }
   catch (const cv::Exception& e)
   {
@@ -186,9 +190,16 @@ bool HandEyeCharucoTarget::detectTargetPose(cv::Mat& image)
     params_ptr->cornerRefinementMethod = cv::aruco::CORNER_REFINE_NONE;
 #endif
 
+    // White-on-black targets: detect on an inverted copy, draw on the original image.
+    cv::Mat detection_image;
+    if (invert_colors_)
+      cv::bitwise_not(image, detection_image);
+    else
+      detection_image = image;
+
     std::vector<int> marker_ids;
     std::vector<std::vector<cv::Point2f>> marker_corners;
-    cv::aruco::detectMarkers(image, dictionary, marker_corners, marker_ids, params_ptr);
+    cv::aruco::detectMarkers(detection_image, dictionary, marker_corners, marker_ids, params_ptr);
     if (marker_ids.empty())
     {
       RCLCPP_DEBUG_STREAM_THROTTLE(LOGGER_CALIBRATION_TARGET, clock, 1,
@@ -199,7 +210,7 @@ bool HandEyeCharucoTarget::detectTargetPose(cv::Mat& image)
     // Find ChArUco corners
     std::vector<cv::Point2f> charuco_corners;
     std::vector<int> charuco_ids;
-    cv::aruco::interpolateCornersCharuco(marker_corners, marker_ids, image, board, charuco_corners, charuco_ids,
+    cv::aruco::interpolateCornersCharuco(marker_corners, marker_ids, detection_image, board, charuco_corners, charuco_ids,
                                          camera_matrix_, distortion_coeffs_);
 
     // Estimate aruco board pose

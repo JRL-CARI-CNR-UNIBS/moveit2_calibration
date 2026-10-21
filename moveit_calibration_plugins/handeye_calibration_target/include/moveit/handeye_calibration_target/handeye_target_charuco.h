@@ -85,6 +85,8 @@ private:
   double board_size_meters_;   // Printed board size, longest dimension
   double marker_size_meters_;  // Printed marker size
 
+  bool invert_colors_ = false;  // Target printed white-on-black
+
   std::mutex charuco_mutex_;
 };
 

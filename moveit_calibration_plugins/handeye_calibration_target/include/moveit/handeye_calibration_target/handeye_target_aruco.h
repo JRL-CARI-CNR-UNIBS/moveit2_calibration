@@ -84,6 +84,8 @@ private:
   double marker_size_real_;        // Printed marker size
   double marker_separation_real_;  // Printed marker separation distance
 
+  bool invert_colors_ = false;  // Target printed white-on-black
+
   std::mutex aruco_mutex_;
 };
 

@@ -71,13 +71,14 @@ public:
   class Parameter
   {
   public:
-    const enum ParameterType { Int, Float, Enum } parameter_type_;
+    const enum ParameterType { Int, Float, Enum, Bool } parameter_type_;
     const std::string name_;
     union Value
     {
       int i;
       float f;
       std::size_t e;
+      bool b;
     } value_;
     const std::vector<std::string> enum_values_;
 
@@ -108,6 +109,16 @@ public:
         value_.f = default_value;
       else
         RCLCPP_ERROR(LOGGER_CALIBRATION_TARGET, "Float default value specified for non-float parameter %s",
+                     name.c_str());
+    }
+
+    Parameter(std::string name, ParameterType parameter_type, bool default_value)
+      : name_(name), parameter_type_(parameter_type)
+    {
+      if (parameter_type_ == ParameterType::Bool)
+        value_.b = default_value;
+      else
+        RCLCPP_ERROR(LOGGER_CALIBRATION_TARGET, "Boolean default value specified for non-boolean parameter %s",
                      name.c_str());
     }
 
@@ -352,6 +363,49 @@ public:
           param.value_.e = std::distance(param.enum_values_.begin(), it);
           return true;
         }
+      }
+    }
+    return false;
+  }
+
+  /**
+   * @brief Set target enum parameter from a string literal.
+   * Without this overload a literal would pick setParameter(name, bool).
+   */
+  virtual bool setParameter(std::string name, const char* value)
+  {
+    return setParameter(name, std::string(value));
+  }
+
+  /**
+   * @brief Set target boolean parameter
+   * @return True if successful setting parameter
+   */
+  virtual bool setParameter(std::string name, bool value)
+  {
+    for (auto& param : parameters_)
+    {
+      if (param.name_ == name && param.parameter_type_ == Parameter::Bool)
+      {
+        param.value_.b = value;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * @brief Get target parameter boolean value
+   * @return True if successful getting parameter
+   */
+  virtual bool getParameter(std::string name, bool& value) const
+  {
+    for (auto& param : parameters_)
+    {
+      if (param.name_ == name && param.parameter_type_ == Parameter::Bool)
+      {
+        value = param.value_.b;
+        return true;
       }
     }
     return false;

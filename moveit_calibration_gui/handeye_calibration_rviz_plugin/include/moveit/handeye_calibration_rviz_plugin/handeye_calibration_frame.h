@@ -46,6 +46,7 @@
 #include <moveit/handeye_calibration_rviz_plugin/handeye_target_widget.h>
 #include <moveit/handeye_calibration_rviz_plugin/handeye_context_widget.h>
 #include <moveit/handeye_calibration_rviz_plugin/handeye_control_widget.h>
+#include <moveit/handeye_calibration_rviz_plugin/robot_model_provider.h>
 
 #ifndef Q_MOC_RUN
 #include <rclcpp/rclcpp.hpp>
@@ -90,6 +91,7 @@ private:
 
   rviz_visual_tools::TFVisualToolsPtr tf_tools_;
   rclcpp::Node::SharedPtr node_;
+  RobotModelProviderPtr robot_model_provider_;
 };
 
 }  // namespace moveit_rviz_plugin

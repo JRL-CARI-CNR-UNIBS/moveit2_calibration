@@ -168,6 +168,7 @@ void TargetTabWidget::loadWidget(const rviz_common::Config& config)
   int param_int;
   float param_float;
   QString param_enum;
+  bool param_bool;
   for (const moveit_handeye_calibration::HandEyeTargetBase::Parameter& param : target_plugin_params_)
   {
     switch (param.parameter_type_)
@@ -187,6 +188,10 @@ void TargetTabWidget::loadWidget(const rviz_common::Config& config)
           static_cast<QComboBox*>(target_param_inputs_[param.name_])->setCurrentIndex(index);
         }
         break;
+      case moveit_handeye_calibration::HandEyeTargetBase::Parameter::ParameterType::Bool:
+        if (config.mapGetBool(param.name_.c_str(), &param_bool))
+          static_cast<QCheckBox*>(target_param_inputs_[param.name_])->setChecked(param_bool);
+        break;
     }
   }
 
@@ -203,7 +208,7 @@ void TargetTabWidget::loadWidget(const rviz_common::Config& config)
           if (!topic.first.compare("image_topic"))
           {
             camera_sub_.shutdown();
-            camera_sub_ = it_.subscribeCamera(topic_name.toStdString(), 1, &TargetTabWidget::cameraCallback, this);
+            subscribeCamera(topic_name.toStdString());
           }
         }
         catch (const image_transport::TransportLoadException& e)
@@ -233,6 +238,9 @@ void TargetTabWidget::saveWidget(rviz_common::Config& config)
       case moveit_handeye_calibration::HandEyeTargetBase::Parameter::ParameterType::Enum:
         param_value = static_cast<QComboBox*>(target_param_inputs_[param.name_])->currentText();
         config.mapSetValue(param.name_.c_str(), param_value);
+        break;
+      case moveit_handeye_calibration::HandEyeTargetBase::Parameter::ParameterType::Bool:
+        config.mapSetValue(param.name_.c_str(), static_cast<QCheckBox*>(target_param_inputs_[param.name_])->isChecked());
         break;
     }
   }
@@ -304,6 +312,7 @@ bool TargetTabWidget::loadInputWidgetsForTargetType(const std::string& plugin_na
           static_cast<QLineEdit*>(target_param_inputs_[param.name_])->setText(std::to_string(param.value_.f).c_str());
           break;
         case moveit_handeye_calibration::HandEyeTargetBase::Parameter::ParameterType::Enum:
+        {
           QComboBox* combo_box = new QComboBox();
           for (const std::string& value : param.enum_values_)
           {
@@ -313,6 +322,15 @@ bool TargetTabWidget::loadInputWidgetsForTargetType(const std::string& plugin_na
           target_param_layout_->addRow(param.name_.c_str(), target_param_inputs_[param.name_]);
           static_cast<QComboBox*>(target_param_inputs_[param.name_])->setCurrentIndex(param.value_.e);
           break;
+        }
+        case moveit_handeye_calibration::HandEyeTargetBase::Parameter::ParameterType::Bool:
+        {
+          QCheckBox* check_box = new QCheckBox();
+          check_box->setChecked(param.value_.b);
+          target_param_inputs_.insert(std::make_pair(param.name_, check_box));
+          target_param_layout_->addRow(param.name_.c_str(), check_box);
+          break;
+        }
       }
     }
   }
@@ -349,6 +367,9 @@ bool TargetTabWidget::createTargetInstance()
           target_->setParameter(
               param.name_, static_cast<QComboBox*>(target_param_inputs_[param.name_])->currentText().toStdString());
           break;
+        case moveit_handeye_calibration::HandEyeTargetBase::Parameter::ParameterType::Bool:
+          target_->setParameter(param.name_, static_cast<QCheckBox*>(target_param_inputs_[param.name_])->isChecked());
+          break;
       }
     }
     target_->initialize();
@@ -361,6 +382,17 @@ bool TargetTabWidget::createTargetInstance()
   }
 
   return true;
+}
+
+void TargetTabWidget::subscribeCamera(const std::string& topic)
+{
+  rmw_qos_profile_t qos = rmw_qos_profile_sensor_data;
+  qos.depth = 1;
+  camera_sub_ = image_transport::create_camera_subscription(
+      node_.get(), topic,
+      [this](const sensor_msgs::msg::Image::ConstSharedPtr& image,
+             const sensor_msgs::msg::CameraInfo::ConstSharedPtr& camera_info) { cameraCallback(image, camera_info); },
+      image_transport::TransportHints(node_.get()).getTransport(), qos);
 }
 
 void TargetTabWidget::cameraCallback(const sensor_msgs::msg::Image::ConstSharedPtr& image,
@@ -550,7 +582,7 @@ void TargetTabWidget::imageTopicComboboxChanged(const QString& topic)
   {
     try
     {
-      camera_sub_ = it_.subscribeCamera(topic.toStdString(), 1, &TargetTabWidget::cameraCallback, this);
+      subscribeCamera(topic.toStdString());
     }
     catch (image_transport::TransportLoadException& e)
     {

@@ -46,9 +46,9 @@ void TFFrameNameComboBox::mousePressEvent(QMouseEvent* event)
 
   clear();
   addItem(QString(""));
-  if (robot_model_loader_->getModel())  // Ensure that robot is brought up
+  if (const moveit::core::RobotModelConstPtr model = robot_model_provider_->getModel())  // robot is up
   {
-    const std::vector<std::string>& robot_links = robot_model_loader_->getModel()->getLinkModelNames();
+    const std::vector<std::string>& robot_links = model->getLinkModelNames();
     for (const std::string& name : names)
     {
       auto it = std::find(robot_links.begin(), robot_links.end(), name);
@@ -152,8 +152,10 @@ void SliderWidget::changeSlider()
 }
 
 ContextTabWidget::ContextTabWidget(rclcpp::Node::SharedPtr node, HandEyeCalibrationDisplay* pdisplay,
-                                   rviz_common::DisplayContext* context, QWidget* parent)
+                                   rviz_common::DisplayContext* context, RobotModelProviderPtr robot_model_provider,
+                                   QWidget* parent)
   : QWidget(parent)
+  , robot_model_provider_(std::move(robot_model_provider))
   , node_(node)
   , context_(context)
   , calibration_display_(pdisplay)
@@ -186,16 +188,16 @@ ContextTabWidget::ContextTabWidget(rclcpp::Node::SharedPtr node, HandEyeCalibrat
   QFormLayout* frame_layout = new QFormLayout();
   frame_group->setLayout(frame_layout);
 
-  frames_.insert(std::make_pair("sensor", new TFFrameNameComboBox(context_, node_, CAMERA_FRAME)));
+  frames_.insert(std::make_pair("sensor", new TFFrameNameComboBox(context_, node_, robot_model_provider_, CAMERA_FRAME)));
   frame_layout->addRow("Sensor frame:", frames_["sensor"]);
 
-  frames_.insert(std::make_pair("object", new TFFrameNameComboBox(context_, node_, ENVIRONMENT_FRAME)));
+  frames_.insert(std::make_pair("object", new TFFrameNameComboBox(context_, node_, robot_model_provider_, ENVIRONMENT_FRAME)));
   frame_layout->addRow("Object frame:", frames_["object"]);
 
-  frames_.insert(std::make_pair("eef", new TFFrameNameComboBox(context_, node_, ROBOT_FRAME)));
+  frames_.insert(std::make_pair("eef", new TFFrameNameComboBox(context_, node_, robot_model_provider_, ROBOT_FRAME)));
   frame_layout->addRow("End-effector frame:", frames_["eef"]);
 
-  frames_.insert(std::make_pair("base", new TFFrameNameComboBox(context_, node_, ROBOT_FRAME)));
+  frames_.insert(std::make_pair("base", new TFFrameNameComboBox(context_, node_, robot_model_provider_, ROBOT_FRAME)));
   frame_layout->addRow("Robot base frame:", frames_["base"]);
 
   for (std::pair<const std::string, TFFrameNameComboBox*>& frame : frames_)
@@ -240,6 +242,8 @@ ContextTabWidget::ContextTabWidget(rclcpp::Node::SharedPtr node, HandEyeCalibrat
   camera_info_.reset(new sensor_msgs::msg::CameraInfo());
 
   visual_tools_.reset(new moveit_visual_tools::MoveItVisualTools(node_, "world", "/moveit_visual_tools"));
+  // Create the marker publisher now without waiting for a subscriber (the default waits 5 s on the GUI thread).
+  visual_tools_->loadMarkerPub(false);
   visual_tools_->enableFrameLocking(true);
   visual_tools_->setAlpha(1.0);
   visual_tools_->setLifetime(0.0);

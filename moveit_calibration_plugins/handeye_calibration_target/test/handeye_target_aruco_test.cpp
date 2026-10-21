@@ -39,7 +39,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <opencv2/core/core.hpp>
-#include <tf2_eigen/tf2_eigen.h>
+#include <tf2_eigen/tf2_eigen.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <pluginlib/class_loader.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
@@ -75,7 +75,7 @@ protected:
     }
 
     std::string image_path = ament_index_cpp::get_package_share_directory("moveit_calibration_plugins") +
-                             "/handeye_calibration_target/test/test_aruco_marker_detection.png";
+                             "/test/test_aruco_marker_detection.png";
 
     image_ = cv::imread(image_path, cv::IMREAD_COLOR);
 
@@ -151,6 +151,51 @@ TEST_F(MoveItHandEyeTargetTester, DetectArucoMarkerPose)
 #endif
   ASSERT_TRUE(ret.translation().isApprox(t, 0.01));
   ASSERT_TRUE(ret.rotation().eulerAngles(0, 1, 2).isApprox(r, 0.01));
+}
+
+TEST_F(MoveItHandEyeTargetTester, DetectInvertedArucoMarkerPose)
+{
+  // Set camera intrinsic parameters
+  sensor_msgs::msg::CameraInfo::Ptr camera_info(new sensor_msgs::msg::CameraInfo());
+  camera_info->height = 480;
+  camera_info->width = 640;
+  camera_info->header.frame_id = "camera_color_optical_frame";
+  camera_info->distortion_model = "plumb_bob";
+  camera_info->d = std::vector<double>{ 0.0, 0.0, 0.0, 0.0, 0.0 };
+  camera_info->k = std::array<double, 9>{
+    618.6002197265625, 0.0, 321.9837646484375, 0.0, 619.1103515625, 241.1459197998047, 0.0, 0.0, 1.0
+  };
+  camera_info->r = std::array<double, 9>{ 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0 };
+  camera_info->p = std::array<double, 12>{
+    618.6002197265625, 0.0, 321.9837646484375, 0.0, 0.0, 619.1103515625, 241.1459197998047, 0.0, 0.0, 0.0, 1.0, 0.0
+  };
+  ASSERT_TRUE(target_->setCameraIntrinsicParams(camera_info));
+
+  cv::Mat gray_image;
+  cv::cvtColor(image_, gray_image, cv::COLOR_RGB2GRAY);
+
+  // Reference: normal target, normal image
+  cv::Mat normal_image = gray_image.clone();
+  ASSERT_TRUE(target_->detectTargetPose(normal_image));
+  const Eigen::Isometry3d expected =
+      tf2::transformToEigen(target_->getTransformStamped(camera_info->header.frame_id));
+
+  // White-on-black target: inverted image with "invert colors" enabled must give the same pose
+  ASSERT_TRUE(target_->setParameter("invert colors", true));
+  ASSERT_TRUE(target_->initialize());
+  cv::Mat inverted_image;
+  cv::bitwise_not(gray_image, inverted_image);
+  ASSERT_TRUE(target_->detectTargetPose(inverted_image));
+  const Eigen::Isometry3d actual =
+      tf2::transformToEigen(target_->getTransformStamped(camera_info->header.frame_id));
+  EXPECT_TRUE(actual.translation().isApprox(expected.translation(), 1e-6));
+  EXPECT_TRUE(actual.rotation().isApprox(expected.rotation(), 1e-6));
+
+  // Without "invert colors" the inverted image must not be detected
+  ASSERT_TRUE(target_->setParameter("invert colors", false));
+  ASSERT_TRUE(target_->initialize());
+  cv::bitwise_not(gray_image, inverted_image);
+  EXPECT_FALSE(target_->detectTargetPose(inverted_image));
 }
 
 int main(int argc, char** argv)

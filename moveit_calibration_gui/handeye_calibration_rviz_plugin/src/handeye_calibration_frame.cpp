@@ -38,6 +38,7 @@
 #include <moveit/handeye_calibration_rviz_plugin/handeye_calibration_frame.h>
 
 #include <Eigen/Geometry>
+#include <QScrollArea>
 #include <rclcpp/rclcpp.hpp>
 #include <cmath>
 
@@ -48,7 +49,6 @@ HandEyeCalibrationFrame::HandEyeCalibrationFrame(HandEyeCalibrationDisplay* pdis
   : QWidget(parent), calibration_display_(pdisplay), context_(context)
 {
   node_ = std::make_shared<rclcpp::Node>("handeye_calibration_frame");
-  setMinimumSize(695, 460);
   // Basic widget container
   QVBoxLayout* layout = new QVBoxLayout();
   setLayout(layout);
@@ -64,16 +64,19 @@ HandEyeCalibrationFrame::HandEyeCalibrationFrame(HandEyeCalibrationDisplay* pdis
   QTabWidget* tabs = new QTabWidget(this);
   tab_target_ = new TargetTabWidget(node_, calibration_display_);
 
+  // Shared robot model, loaded from the robot_description topics without blocking RViz.
+  robot_model_provider_ = std::make_shared<RobotModelProvider>(node_);
+
   tf_tools_.reset(new rviz_visual_tools::TFVisualTools(node_, 250));
 
-  tab_context_ = new ContextTabWidget(node_, calibration_display_, context_);
+  tab_context_ = new ContextTabWidget(node_, calibration_display_, context_, robot_model_provider_);
   tab_context_->setTFTool(tf_tools_);
   connect(tab_target_, SIGNAL(cameraInfoChanged(sensor_msgs::msg::CameraInfo)), tab_context_,
           SLOT(setCameraInfo(sensor_msgs::msg::CameraInfo)));
   connect(tab_target_, SIGNAL(opticalFrameChanged(const std::string&)), tab_context_,
           SLOT(setOpticalFrame(const std::string&)));
 
-  tab_control_ = new ControlTabWidget(node_, calibration_display_);
+  tab_control_ = new ControlTabWidget(node_, calibration_display_, robot_model_provider_);
   tab_control_->setTFTool(tf_tools_);
   tab_control_->UpdateSensorMountType(0);
   connect(tab_context_, SIGNAL(sensorMountTypeChanged(int)), tab_control_, SLOT(UpdateSensorMountType(int)));
@@ -82,25 +85,36 @@ HandEyeCalibrationFrame::HandEyeCalibrationFrame(HandEyeCalibrationDisplay* pdis
   connect(tab_control_, SIGNAL(sensorPoseUpdate(double, double, double, double, double, double)), tab_context_,
           SLOT(updateCameraPose(double, double, double, double, double, double)));
 
-  tabs->addTab(tab_target_, "Target");
-  tabs->addTab(tab_context_, "Context");
-  tabs->addTab(tab_control_, "Calibrate");
+  // Wrap each tab in a scroll area so the panel can be shrunk freely;
+  // scrollbars appear when the content no longer fits.
+  auto wrap_in_scroll_area = [this](QWidget* widget) {
+    QScrollArea* scroll = new QScrollArea(this);
+    scroll->setWidget(widget);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    return scroll;
+  };
+  tabs->addTab(wrap_in_scroll_area(tab_target_), "Target");
+  tabs->addTab(wrap_in_scroll_area(tab_context_), "Context");
+  tabs->addTab(wrap_in_scroll_area(tab_control_), "Calibrate");
   layout->addWidget(tabs);
 
   // Spin node in the background for sub callbacks
   executor_.add_node(node_);
-  auto spin = [this]() {
-    while (rclcpp::ok())
-    {
-      executor_.spin_once();
-    }
-  };
-  executor_thread_ = std::thread(spin);
+  // spin() returns on executor_.cancel() (see destructor) or on ROS shutdown.
+  executor_thread_ = std::thread([this]() { executor_.spin(); });
 
   RCLCPP_INFO_STREAM(node_->get_logger(), "handeye calibration gui created.");
 }
 
-HandEyeCalibrationFrame::~HandEyeCalibrationFrame() = default;
+HandEyeCalibrationFrame::~HandEyeCalibrationFrame()
+{
+  // A still-joinable std::thread calls std::terminate() when destroyed.
+  executor_.cancel();
+  if (executor_thread_.joinable())
+    executor_thread_.join();
+  executor_.remove_node(node_);
+}
 
 void HandEyeCalibrationFrame::saveWidget(rviz_common::Config& config) const
 {

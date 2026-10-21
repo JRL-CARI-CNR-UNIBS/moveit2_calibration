@@ -53,6 +53,7 @@ HandEyeArucoTarget::HandEyeArucoTarget()
   parameters_.push_back(Parameter("ArUco dictionary", Parameter::ParameterType::Enum, dictionaries, 1));
   parameters_.push_back(Parameter("measured marker size (m)", Parameter::ParameterType::Float, 0.2));
   parameters_.push_back(Parameter("measured separation (m)", Parameter::ParameterType::Float, 0.02));
+  parameters_.push_back(Parameter("invert colors", Parameter::ParameterType::Bool, false));
 }
 
 bool HandEyeArucoTarget::initialize()
@@ -72,6 +73,7 @@ bool HandEyeArucoTarget::initialize()
       getParameter("marker border (bits)", border_bits) && getParameter("ArUco dictionary", dictionary_id) &&
       getParameter("measured marker size (m)", marker_measured_size) &&
       getParameter("measured separation (m)", marker_measured_separation) &&
+      getParameter("invert colors", invert_colors_) &&
       setTargetIntrinsicParams(markers_x, markers_y, marker_size, separation, border_bits, dictionary_id) &&
       setTargetDimension(marker_measured_size, marker_measured_separation);
 
@@ -144,6 +146,8 @@ bool HandEyeArucoTarget::createTargetImage(cv::Mat& image) const
 
     // Create target image
     board->draw(image_size, image, separation_, border_bits_);
+    if (invert_colors_)
+      cv::bitwise_not(image, image);
   }
   catch (const cv::Exception& e)
   {
@@ -172,9 +176,16 @@ bool HandEyeArucoTarget::detectTargetPose(cv::Mat& image)
     params_ptr->cornerRefinementMethod = cv::aruco::CORNER_REFINE_NONE;
 #endif
 
+    // White-on-black targets: detect on an inverted copy, draw on the original image.
+    cv::Mat detection_image;
+    if (invert_colors_)
+      cv::bitwise_not(image, detection_image);
+    else
+      detection_image = image;
+
     std::vector<int> marker_ids;
     std::vector<std::vector<cv::Point2f>> marker_corners;
-    cv::aruco::detectMarkers(image, dictionary, marker_corners, marker_ids, params_ptr);
+    cv::aruco::detectMarkers(detection_image, dictionary, marker_corners, marker_ids, params_ptr);
     if (marker_ids.empty())
     {
       RCLCPP_DEBUG_STREAM_THROTTLE(LOGGER_CALIBRATION_TARGET, clock, LOG_THROTTLE_PERIOD, "No aruco marker detected.");
@@ -183,7 +194,7 @@ bool HandEyeArucoTarget::detectTargetPose(cv::Mat& image)
 
     // Refine markers borders
     std::vector<std::vector<cv::Point2f>> rejected_corners;
-    cv::aruco::refineDetectedMarkers(image, board, marker_corners, marker_ids, rejected_corners, camera_matrix_,
+    cv::aruco::refineDetectedMarkers(detection_image, board, marker_corners, marker_ids, rejected_corners, camera_matrix_,
                                      distortion_coeffs_);
 
     // Estimate aruco board pose

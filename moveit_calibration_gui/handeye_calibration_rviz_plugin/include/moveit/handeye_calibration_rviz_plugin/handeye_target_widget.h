@@ -43,6 +43,7 @@
 #include <QLineEdit>
 #include <QGroupBox>
 #include <QComboBox>
+#include <QCheckBox>
 #include <QMetaType>
 #include <QTabWidget>
 #include <QPushButton>
@@ -61,7 +62,7 @@
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
 
-#include <cv_bridge/cv_bridge.h>
+#include <cv_bridge/cv_bridge.hpp>
 #include <image_transport/image_transport.hpp>
 
 #include <pluginlib/class_loader.hpp>
@@ -131,6 +132,10 @@ public:
   bool createTargetInstance();
 
   void fillDictionaryIds(std::string id = "");
+
+  // Subscribe to image + camera_info with sensor-data QoS (best effort),
+  // which matches both reliable and best-effort camera publishers.
+  void subscribeCamera(const std::string& topic);
 
   void cameraCallback(const sensor_msgs::msg::Image::ConstSharedPtr& image,
                       const sensor_msgs::msg::CameraInfo::ConstSharedPtr& camera_info);

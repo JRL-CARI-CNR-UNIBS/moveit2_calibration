@@ -5,6 +5,7 @@ set(HEADERS
   include/moveit/handeye_calibration_rviz_plugin/handeye_context_widget.h
   include/moveit/handeye_calibration_rviz_plugin/handeye_control_widget.h
   include/moveit/handeye_calibration_rviz_plugin/handeye_target_widget.h
+  include/moveit/handeye_calibration_rviz_plugin/robot_model_provider.h
 )
 set(SOURCE_FILES_CORE
   src/handeye_calibration_display.cpp
@@ -12,6 +13,7 @@ set(SOURCE_FILES_CORE
   src/handeye_context_widget.cpp
   src/handeye_control_widget.cpp
   src/handeye_target_widget.cpp
+  src/robot_model_provider.cpp
 )
 set(SOURCE_FILES_PLUGINS
   src/plugin_init.cpp

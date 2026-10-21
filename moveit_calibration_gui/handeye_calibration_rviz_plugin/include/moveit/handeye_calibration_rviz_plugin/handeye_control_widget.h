@@ -55,12 +55,13 @@
 #include <QStandardItemModel>
 
 // ros
-#include <tf2_eigen/tf2_eigen.h>
+#include <tf2_eigen/tf2_eigen.hpp>
 #include <pluginlib/class_loader.hpp>
 #include <tf2_ros/transform_listener.h>
 #include <rviz_visual_tools/tf_visual_tools.hpp>
 #include <moveit/move_group_interface/move_group_interface.h>
 #include <moveit/planning_scene_monitor/planning_scene_monitor.h>
+#include <moveit/handeye_calibration_rviz_plugin/robot_model_provider.h>
 #include <moveit/handeye_calibration_solver/handeye_solver_base.h>
 #include <moveit/planning_scene_rviz_plugin/background_processing.hpp>
 #include <moveit/handeye_calibration_rviz_plugin/handeye_calibration_display.h>
@@ -115,7 +116,7 @@ class ControlTabWidget : public QWidget
 
 public:
   explicit ControlTabWidget(rclcpp::Node::SharedPtr node, HandEyeCalibrationDisplay* pdisplay,
-                            QWidget* parent = Q_NULLPTR);
+                            RobotModelProviderPtr robot_model_provider, QWidget* parent = Q_NULLPTR);
   ~ControlTabWidget()
   {
     tf_tools_.reset();
@@ -156,6 +157,15 @@ public:
 
   void fillPlanningGroupNameComboBox();
 
+  // True if the service (relative names resolved in node_'s namespace) is currently advertised. Never blocks.
+  bool isServiceAvailable(const std::string& service_name) const;
+
+  // Name of the move_group namespace from the display property, may be empty.
+  std::string moveGroupNamespace() const;
+
+  // Create move_group_ for selected_group_. Blocks up to 5 s if move_group is not running.
+  bool createMoveGroup();
+
 Q_SIGNALS:
 
   void sensorPoseUpdate(double x, double y, double z, double rx, double ry, double rz);
@@ -183,8 +193,6 @@ private Q_SLOTS:
   void planningGroupNameChanged(const QString& text);
 
   void setGroupName(const std::string& group_name);
-
-  void planningGroupNamespaceChanged();
 
   void saveJointStateBtnClicked(bool clicked);
 
@@ -257,6 +265,10 @@ private:
   // Ros components
   // **************************************************************
   rclcpp::Node::SharedPtr node_;
+  RobotModelProviderPtr robot_model_provider_;
+  QString pending_group_name_;  // group from the saved config, applied once the robot model is available
+  std::string selected_group_;                     // planning group chosen in the GUI
+  moveit::core::RobotModelConstPtr selected_model_;  // robot model move_group_ is (to be) created with
   std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
   tf2_ros::TransformListener tf_listener_;
   rviz_visual_tools::TFVisualToolsPtr tf_tools_;

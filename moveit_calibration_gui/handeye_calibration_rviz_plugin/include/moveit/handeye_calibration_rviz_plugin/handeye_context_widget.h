@@ -50,17 +50,18 @@
 // ros
 #include <shape_msgs/msg/mesh.hpp>
 #include <rviz_common/frame_manager_iface.hpp>
-#include <tf2_eigen/tf2_eigen.h>
+#include <tf2_eigen/tf2_eigen.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <tf2_ros/transform_listener.h>
 #include <rviz_visual_tools/tf_visual_tools.hpp>
 #include <rviz_visual_tools/rviz_visual_tools.hpp>
-#include <image_geometry/pinhole_camera_model.h>
+#include <image_geometry/pinhole_camera_model.hpp>
 #include <moveit_visual_tools/moveit_visual_tools.h>
 #include <moveit/handeye_calibration_solver/handeye_solver_base.h>
 #include <moveit/handeye_calibration_rviz_plugin/handeye_calibration_display.h>
 #include <moveit/common_planning_interface_objects/common_objects.h>
 #include <moveit/planning_scene_monitor/planning_scene_monitor.h>
+#include <moveit/handeye_calibration_rviz_plugin/robot_model_provider.h>
 #include <moveit/planning_scene_rviz_plugin/background_processing.hpp>
 #include <moveit/utils/rclcpp_utils.h>
 
@@ -91,15 +92,14 @@ class TFFrameNameComboBox : public QComboBox
   Q_OBJECT
 public:
   TFFrameNameComboBox(rviz_common::DisplayContext* context, rclcpp::Node::SharedPtr& node,
-                      FRAME_SOURCE source = ROBOT_FRAME, QWidget* parent = 0)
-    : QComboBox(parent), frame_source_(source), context_(context), node_(node)
+                      RobotModelProviderPtr robot_model_provider, FRAME_SOURCE source = ROBOT_FRAME,
+                      QWidget* parent = 0)
+    : QComboBox(parent)
+    , frame_source_(source)
+    , node_(node)
+    , context_(context)
+    , robot_model_provider_(std::move(robot_model_provider))
   {
-    robot_model_loader_.reset(new robot_model_loader::RobotModelLoader(node_, "robot_description"));
-  }
-
-  ~TFFrameNameComboBox()
-  {
-    robot_model_loader_.reset();
   }
 
   bool hasFrame(const std::string& frame_name);
@@ -111,7 +111,7 @@ private:
   FRAME_SOURCE frame_source_;
   rclcpp::Node::SharedPtr node_;
   rviz_common::DisplayContext* context_;
-  robot_model_loader::RobotModelLoaderConstPtr robot_model_loader_;
+  RobotModelProviderPtr robot_model_provider_;
 };
 
 // **************************************************
@@ -158,7 +158,8 @@ class ContextTabWidget : public QWidget
   Q_OBJECT
 public:
   explicit ContextTabWidget(rclcpp::Node::SharedPtr node, HandEyeCalibrationDisplay* pdisplay,
-                            rviz_common::DisplayContext* context, QWidget* parent = Q_NULLPTR);
+                            rviz_common::DisplayContext* context, RobotModelProviderPtr robot_model_provider,
+                            QWidget* parent = Q_NULLPTR);
   ~ContextTabWidget()
   {
     camera_info_.reset();
@@ -244,6 +245,7 @@ private:
   // Ros components
   // **************************************************************
 
+  RobotModelProviderPtr robot_model_provider_;
   rclcpp::Node::SharedPtr node_;
   rviz_common::DisplayContext* context_;
   moveit_visual_tools::MoveItVisualToolsPtr visual_tools_;

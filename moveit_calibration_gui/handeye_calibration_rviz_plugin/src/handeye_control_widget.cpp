@@ -35,7 +35,8 @@
 /* Author: Yu Yan */
 
 #include <moveit/handeye_calibration_rviz_plugin/handeye_control_widget.h>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+#include <rclcpp/expand_topic_or_service_name.hpp>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 namespace moveit_rviz_plugin
@@ -94,9 +95,11 @@ int ProgressBarWidget::getValue()
   return bar_->value();
 }
 
-ControlTabWidget::ControlTabWidget(rclcpp::Node::SharedPtr node, HandEyeCalibrationDisplay* pdisplay, QWidget* parent)
+ControlTabWidget::ControlTabWidget(rclcpp::Node::SharedPtr node, HandEyeCalibrationDisplay* pdisplay,
+                                   RobotModelProviderPtr robot_model_provider, QWidget* parent)
   : QWidget(parent)
   , node_(node)
+  , robot_model_provider_(std::move(robot_model_provider))
   , calibration_display_(pdisplay)
   , tf_buffer_(new tf2_ros::Buffer(std::make_shared<rclcpp::Clock>(RCL_ROS_TIME),
                                    (tf2::Duration)(tf2::BUFFER_CORE_DEFAULT_CACHE_TIME), node_))
@@ -230,7 +233,9 @@ ControlTabWidget::ControlTabWidget(rclcpp::Node::SharedPtr node, HandEyeCalibrat
   if (loadSolverPlugin(plugins))
     fillSolverTypes(plugins);
 
-  // Connect PSM and get group names
+  // Connect PSM and get group names; repeated whenever robot_description(_semantic) arrives
+  connect(robot_model_provider_.get(), &RobotModelProvider::robotModelChanged, this,
+          &ControlTabWidget::fillPlanningGroupNameComboBox);
   fillPlanningGroupNameComboBox();
 
   // Set plan and execution watcher
@@ -249,15 +254,13 @@ void ControlTabWidget::loadWidget(const rviz_common::Config& config)
 {
   QString group_name;
   config.mapGetString("group", &group_name);
-  if (!group_name.isEmpty() && planning_scene_monitor_ && planning_scene_monitor_->getRobotModel())
+  // The robot model may not be loaded yet: keep the group and apply it in fillPlanningGroupNameComboBox().
+  pending_group_name_ = group_name;
+  if (!group_name.isEmpty() && group_name_->findText(group_name) != -1)
   {
-    const std::vector<std::string> groups = planning_scene_monitor_->getRobotModel()->getJointModelGroupNames();
-    std::vector<std::string>::const_iterator it = std::find(groups.begin(), groups.end(), group_name.toStdString());
-    if (it != groups.end())
-    {
-      group_name_->setCurrentText(group_name);
-      Q_EMIT group_name_->activated(group_name);
-    }
+    group_name_->setCurrentText(group_name);
+    Q_EMIT group_name_->activated(group_name);
+    pending_group_name_.clear();
   }
   QString solver_name;
   config.mapGetString("solver", &solver_name);
@@ -700,47 +703,98 @@ void ControlTabWidget::setGroupName(const std::string& group_name)
   if (move_group_ && move_group_->getName() == group_name)
     return;
 
-  try
+  // Clear the joint values only when the group really changes (not when the robot model is just reloaded)
+  if (group_name != selected_group_)
   {
-    moveit::planning_interface::MoveGroupInterface::Options opt(group_name);
-    // opt.node_handle_ = ros::NodeHandle(calibration_display_->move_group_ns_property_->getStdString());  <- Do I need
-    // to assign opt.robot_model and opt.robot_description ?
-    move_group_.reset(
-        new moveit::planning_interface::MoveGroupInterface(node_, opt, tf_buffer_, rclcpp::Duration(5, 0)));
-
-    // Clear the joint values from any previous group
     joint_states_.clear();
     auto_progress_->setMax(0);
+  }
+  move_group_.reset();
+  selected_group_ = group_name;
+  selected_model_ = robot_model_provider_->getModel();
+
+  // MoveGroupInterface waits for the move_group action servers. Only create it here (GUI thread)
+  // if move_group is already up; otherwise it is created on the first plan, in the planning thread.
+  const std::string move_action =
+      rclcpp::names::append(moveGroupNamespace(), "move_action/_action/send_goal");
+  if (isServiceAvailable(move_action))
+    createMoveGroup();
+  else
+    RCLCPP_INFO(node_->get_logger(), "move_group is not running yet; it will be connected when planning.");
+}
+
+bool ControlTabWidget::createMoveGroup()
+{
+  if (selected_group_.empty() || !selected_model_)
+    return false;
+  try
+  {
+    moveit::planning_interface::MoveGroupInterface::Options opt(selected_group_, "robot_description",
+                                                                moveGroupNamespace());
+    // Reuse the already loaded model; otherwise MoveGroupInterface loads robot_description again and blocks.
+    opt.robot_model = selected_model_;
+    move_group_ = std::make_shared<moveit::planning_interface::MoveGroupInterface>(node_, opt, tf_buffer_,
+                                                                                   rclcpp::Duration(5, 0));
+    return true;
   }
   catch (std::exception& ex)
   {
     RCLCPP_ERROR(node_->get_logger(), "%s", ex.what());
+    return false;
   }
+}
+
+std::string ControlTabWidget::moveGroupNamespace() const
+{
+  return calibration_display_->move_group_ns_property_->getStdString();
+}
+
+bool ControlTabWidget::isServiceAvailable(const std::string& service_name) const
+{
+  const std::string resolved =
+      rclcpp::expand_topic_or_service_name(service_name, node_->get_name(), node_->get_namespace(), true);
+  return node_->get_service_names_and_types().count(resolved) > 0;
 }
 
 void ControlTabWidget::fillPlanningGroupNameComboBox()
 {
   group_name_->clear();
-  // Fill in available planning group names
-  planning_scene_monitor_.reset(new planning_scene_monitor::PlanningSceneMonitor(node_, "robot_description", tf_buffer_,
-                                                                                 "planning_scene_monitor"));
-  if (planning_scene_monitor_)
+  planning_scene_monitor_.reset();
+  move_group_.reset();
+
+  // Never wait for robot_description here (this runs on the GUI thread): the model is
+  // provided asynchronously and this function is called again when it arrives.
+  robot_model_loader::RobotModelLoaderPtr rml = robot_model_provider_->getLoader();
+  if (!rml || !rml->getModel())
   {
-    planning_scene_monitor_->startSceneMonitor(calibration_display_->planning_scene_topic_property_->getStdString());
-    std::string service_name = planning_scene_monitor::PlanningSceneMonitor::DEFAULT_PLANNING_SCENE_SERVICE;
-    if (!calibration_display_->move_group_ns_property_->getStdString().empty())
-      service_name = rclcpp::names::append(calibration_display_->move_group_ns_property_->getStdString(), service_name);
-    if (planning_scene_monitor_->requestPlanningSceneState(service_name))
-    {
-      const moveit::core::RobotModelConstPtr& kmodel = planning_scene_monitor_->getRobotModel();
-      for (const std::string& group_name : kmodel->getJointModelGroupNames())
-      {
-        group_name_->addItem(group_name.c_str());
-      }
-      if (!group_name_->currentText().isEmpty())
-        setGroupName(group_name_->currentText().toStdString());
-    }
+    calibration_display_->setStatus(rviz_common::properties::StatusProperty::Warn, "Robot model",
+                                    "Waiting for the robot_description topic.");
+    return;
   }
+  calibration_display_->setStatus(rviz_common::properties::StatusProperty::Ok, "Robot model",
+                                  QString::fromStdString("Loaded '" + rml->getModel()->getName() + "'."));
+
+  planning_scene_monitor_ =
+      std::make_shared<planning_scene_monitor::PlanningSceneMonitor>(node_, rml, "planning_scene_monitor");
+  planning_scene_monitor_->startSceneMonitor(calibration_display_->planning_scene_topic_property_->getStdString());
+
+  // Ask move_group for the current scene only if its service is up, to avoid a blocking wait.
+  std::string service_name = planning_scene_monitor::PlanningSceneMonitor::DEFAULT_PLANNING_SCENE_SERVICE;
+  if (!moveGroupNamespace().empty())
+    service_name = rclcpp::names::append(moveGroupNamespace(), service_name);
+  if (isServiceAvailable(service_name))
+    planning_scene_monitor_->requestPlanningSceneState(service_name);
+
+  for (const std::string& group_name : rml->getModel()->getJointModelGroupNames())
+    group_name_->addItem(group_name.c_str());
+
+  if (!pending_group_name_.isEmpty() && group_name_->findText(pending_group_name_) != -1)
+  {
+    group_name_->setCurrentText(pending_group_name_);
+    pending_group_name_.clear();
+  }
+  if (!group_name_->currentText().isEmpty())
+    setGroupName(group_name_->currentText().toStdString());
 }
 
 void ControlTabWidget::saveJointStateBtnClicked(bool clicked)
@@ -1002,6 +1056,8 @@ void ControlTabWidget::computePlan()
   }
 
   if (!move_group_)
+    createMoveGroup();  // move_group was not running when the group was selected
+  if (!move_group_)
   {
     planning_res_ = ControlTabWidget::FAILURE_NO_MOVE_GROUP;
     return;
@@ -1029,7 +1085,7 @@ void ControlTabWidget::computePlan()
     move_group_->setMaxVelocityScalingFactor(0.5);
     move_group_->setMaxAccelerationScalingFactor(0.5);
     current_plan_.reset(new moveit::planning_interface::MoveGroupInterface::Plan());
-    planning_res_ = (move_group_->plan(*current_plan_) == moveit::planning_interface::MoveItErrorCode::SUCCESS) ?
+    planning_res_ = (move_group_->plan(*current_plan_) == moveit::core::MoveItErrorCode::SUCCESS) ?
                         ControlTabWidget::SUCCESS :
                         ControlTabWidget::FAILURE_PLAN_FAILED;
 
@@ -1054,7 +1110,7 @@ void ControlTabWidget::autoExecuteBtnClicked(bool clicked)
 void ControlTabWidget::computeExecution()
 {
   if (move_group_ && current_plan_)
-    planning_res_ = (move_group_->execute(*current_plan_) == moveit::planning_interface::MoveItErrorCode::SUCCESS) ?
+    planning_res_ = (move_group_->execute(*current_plan_) == moveit::core::MoveItErrorCode::SUCCESS) ?
                         ControlTabWidget::SUCCESS :
                         ControlTabWidget::FAILURE_PLAN_FAILED;
 
